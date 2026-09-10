@@ -1,0 +1,17 @@
+# Template only — do not apply as-is.
+# Copy per-service once that service actually exposes /metrics, and
+# fill in the real label selector + port name/number from its Deployment.
+#
+# apiVersion: monitoring.googleapis.com/v1
+# kind: PodMonitoring
+# metadata:
+#   name: <service-name>
+#   namespace: <namespace>
+# spec:
+#   selector:
+#     matchLabels:
+#       app: <service-name>
+#   endpoints:
+#     - port: metrics        # name or number of the container port
+#       interval: 30s
+#       path: /metrics
