@@ -7,9 +7,13 @@ terraform {
       version = "~> 7.0"
     }
   }
-  
-   backend "gcs" {
-     bucket = "uma-yadav-tfstate"
-     prefix = "prod-gke"
-   }
+
+  # Uncomment and configure once you have a GCS bucket for state.
+  # Local state is fine to start, but move to a remote backend before
+  # anyone else touches this repo.
+  #
+  # backend "gcs" {
+  #   bucket = "uma-yadav-tfstate"
+  #   prefix = "prod-gke"
+  # }
 }
