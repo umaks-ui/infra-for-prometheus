@@ -98,14 +98,105 @@ infrastructure-level metrics at this point.
    ```
 3. Verify: `kubectl get podmonitoring -n <namespace>`
 
-## 7. Dashboards and alerts
+## 7. Dashboard and alerts
 
-Build these in the console once metrics are confirmed flowing — start with
-one dashboard (pod CPU/memory, restarts, scrape health) and a couple of
-alerts (pod crash-looping, node not ready), then expand once you have real
-application metrics to alert on.
+`dashboard.tf` creates one Cloud Monitoring dashboard (pod CPU, memory,
+restarts, scrape health via `up`), and `alerts.tf` creates three alert
+policies — pod crash-looping, node not ready, and scrape target down — all
+querying GMP directly via PromQL.
 
-## Notes / things deliberately deferred
+You need to supply a notification email (no default, on purpose — it's not
+committed to the repo):
+
+```bash
+terraform apply -var="github_repo=umaks-ui/<your-repo-name>" \
+                  -var="notification_email=you@example.com" \
+                  -out=tfplan
+terraform apply tfplan
+```
+
+Or put both in a `terraform.tfvars` file (add it to `.gitignore` if it has
+anything you don't want committed):
+
+```hcl
+github_repo         = "umaks-ui/<your-repo-name>"
+notification_email  = "you@example.com"
+```
+
+After applying, get the dashboard link:
+
+```bash
+terraform output dashboard_url
+```
+
+Prefer Slack over email? See the commented block in `alerts.tf` for the
+webhook-based notification channel — add a Slack Incoming Webhook URL and
+uncomment it, then reference it in each alert policy's
+`notification_channels`.
+
+**`iam.tf`** also codifies the `roles/monitoring.metricWriter` binding on
+the GKE node service account — this was applied manually via `gcloud`
+while debugging why metrics weren't reaching Cloud Monitoring (collectors
+were healthy and scraping, but had no write permission). It's a no-op on
+apply since the binding already exists, but now it's tracked in Terraform
+instead of only existing as a one-off `gcloud` command.
+
+## 8. Wire up CI/CD (GitHub Actions)
+
+`.github/workflows/terraform.yml` runs `terraform plan` on every PR and
+`terraform apply` on merge to `main`, authenticating via Workload Identity
+Federation (no JSON key).
+
+**Bootstrapping note:** the workflow needs the WIF pool/provider/service
+account (`wif.tf`) to exist before it can authenticate — so the *first*
+apply (which creates `wif.tf`'s resources) has to be run locally with your
+own `gcloud` credentials, same as steps 1–3 above. After that, CI can take
+over.
+
+1. Set your repo before applying:
+   ```bash
+   terraform apply -var="github_repo=umaks-ui/<your-repo-name>" -out=tfplan
+   terraform apply tfplan
+   ```
+2. Grab the two outputs:
+   ```bash
+   terraform output wif_provider
+   terraform output wif_service_account
+   ```
+3. In the GitHub repo: **Settings → Secrets and variables → Actions**, add:
+   - `WIF_PROVIDER` = the `wif_provider` output
+   - `WIF_SERVICE_ACCOUNT` = the `wif_service_account` output
+4. Optional but recommended: **Settings → Environments**, create an
+   environment named `production` and require a manual approval — the
+   apply job in the workflow is already scoped to that environment, so
+   this gates every apply behind a review.
+
+From then on: open a PR → CI comments the plan → merge → CI applies.
+
+## 9. The `test-nginx` canary
+
+Right now `test-nginx` exists only as an imperative `kubectl create
+deployment` — not tracked anywhere. Two options:
+
+**A. Keep it as a permanent canary** (recommended while there's no real
+workload yet) — formalize it as a manifest so it survives cluster
+rebuilds and isn't just floating state:
+```bash
+mkdir -p kubernetes/canary
+kubectl get deployment test-nginx -o yaml > kubernetes/canary/test-nginx-deployment.yaml
+kubectl get service test-nginx -o yaml > kubernetes/canary/test-nginx-service.yaml
+```
+Then trim the `status:`, `uid`, `resourceVersion`, and other
+cluster-generated fields out of both files before committing — keep just
+`apiVersion`, `kind`, `metadata.name`, `metadata.labels`, and `spec`.
+
+**B. Delete it** once you have a real workload to deploy, so Autopilot can
+scale nodes back to zero when nothing's running:
+```bash
+kubectl delete service test-nginx
+kubectl delete deployment test-nginx
+```
+
 
 - **Remote state**: this uses local state to start. Move to a GCS backend
   (see the commented block in `versions.tf`) before more than one person
